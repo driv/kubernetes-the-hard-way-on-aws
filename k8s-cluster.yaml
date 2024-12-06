@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Kubernetes cluster with jumpbox and intra-cluster communication.
+
+Parameters:
+  KeyName:
+    Type: String
+    Description: Name of an existing EC2 KeyPair to enable SSH access to instances
+  AdminIP:
+    Type: String
+    Description: Your IP address for SSH access
+    AllowedPattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$
+    ConstraintDescription: Must be a valid IP CIDR with /32 subnet mask
+  AMIId:
+    Type: String
+    Description: The AMI ID to use for the instances
+    Default: ami-0056a7c4c0c442db6 
+
+Resources:
+  ClusterVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: cluster-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ClusterVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref ClusterVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ClusterVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  JumpboxSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH access to jumpbox
+      VpcId: !Ref ClusterVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminIP
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow intra-cluster communication and SSH from jumpbox
+      VpcId: !Ref ClusterVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref JumpboxSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+  ClusterSecurityGroupIngressIntraCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: ClusterSecurityGroup
+    Properties:
+      GroupId: !Ref ClusterSecurityGroup
+      IpProtocol: "-1"
+      FromPort: -1
+      ToPort: -1
+      SourceSecurityGroupId: !Ref ClusterSecurityGroup
+
+  Jumpbox:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.nano
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIId
+      SecurityGroupIds:
+        - !Ref JumpboxSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: jumpbox
+        - Key: Project
+          Value: kubernetes-the-hard-way
+
+  Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.nano
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIId
+      SecurityGroupIds:
+        - !Ref ClusterSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.0.1.101
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: k8s-server
+        - Key: Project
+          Value: kubernetes-the-hard-way
+
+  Node0:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.nano
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIId
+      SecurityGroupIds:
+        - !Ref ClusterSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.0.1.102
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: k8s-node0
+        - Key: Project
+          Value: kubernetes-the-hard-way
+
+  Node1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.nano
+      KeyName: !Ref KeyName
+      ImageId: !Ref AMIId
+      SecurityGroupIds:
+        - !Ref ClusterSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.0.1.103
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: k8s-node1
+        - Key: Project
+          Value: kubernetes-the-hard-way
+
+Outputs:
+  JumpboxPublicIP:
+    Description: Public IP of the jumpbox
+    Value: !GetAtt Jumpbox.PublicIp
+
+  ServerPrivateIP:
+    Description: Private IP of the Kubernetes server
+    Value: !GetAtt Server.PrivateIp
+  
+  Node0PrivateIP:
+    Description: Private IP of the Kubernetes worker node 0
+    Value: !GetAtt Node0.PrivateIp
+
+  Node1PrivateIP:
+    Description: Private IP of the Kubernetes worker node 1
+    Value: !GetAtt Node1.PrivateIp
+
+  ClusterSecurityGroup:
+    Description: Security group for intra-cluster communication
+    Value: !Ref ClusterSecurityGroup
