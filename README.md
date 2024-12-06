@@ -79,10 +79,10 @@ aws cloudformation create-stack \
 aws cloudformation describe-stacks --stack-name k8s-cluster-with-vpc
 ```
 5. Access the Jumpbox:
-You need to add your key to your ssh-agent so it can be used to jump to the other nodes.
+You need to add your key to your ssh-agent so it can be used to jump to the other nodes. `-A` forwards your key.
 ```
 ssh-add my-keypair.pem
-ssh -i my-keypair.pem admin@<Jumpbox_Public_IP>
+ssh -A -i my-keypair.pem admin@<Jumpbox_Public_IP>
 ```
 
 6. From the jumpbox, access the server and nodes:
